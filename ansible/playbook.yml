@@ -1,0 +1,153 @@
+
+- name: create our db
+  hosts: db
+  tasks:
+    - name: update machine
+      become: yes
+      ansible.builtin.shell: yum update -y
+      args:
+        chdir: /   
+
+    - name: Add Mongo repository
+      become: yes
+      yum_repository:
+        name: mongodb-org-4.0
+        description: MongoDB Repository Repo
+        baseurl: https://repo.mongodb.org/yum/amazon/2/mongodb-org/4.0/x86_64/
+        gpgkey: https://www.mongodb.org/static/pgp/server-4.0.asc
+    
+    - name: Install MongoDB
+      become: yes
+      yum: 
+        name: mongodb-org
+        state: present
+        update_cache: yes
+
+    - name: Enable MongoDB to run on boot
+      become: yes
+      service: 
+        name: mongod 
+        enabled: yes
+        state: started
+
+    - name: update mongo.conf file
+      become: yes
+      ansible.builtin.copy:
+        src:  files/mongod.conf
+        dest: /etc/mongod.conf
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+    
+    - name: restart mongod after changing config file
+      become: yes
+      ansible.builtin.shell: systemctl restart mongod
+      args:
+        chdir: /  
+
+
+- name: create our web app
+  hosts: web
+  tasks:
+
+    # This task could be removed if we had elastic permananent IP addresses and as such didnt have to source new IP address every time.
+    # currently ansible will not transfer an updated file if the current one (with old ip addresses exist). ansible thinks the existing
+    # file is fine but it can contain outdated IP addresses. It is preferable to have a clean install with the constantly changing IPs in our lab session
+    # errors are ignored in case it is fresh launch and the file directory does not yet exist
+    - name: clear old webapp- throws expected error on fresh install(our ip addresses in files change every four hours and as such we must clear old packages and files)
+      ignore_errors: yes 
+      become: yes
+      ansible.builtin.shell: rm -r webapp/
+      args:
+        chdir: /
+    
+    # This task could be removed if we had elastic permananent IP addresses and as such didnt have to source new IP every time.
+    # currently ansible will not transfer an updated file if the current one (with old ip addresses) exist.It is preferable to have a clean install 
+    # with the constantly changing IPs in our lab session
+    - name: clear old tgz-throws expected error on fresh install (our ip addresses in files change every four hours and as such we must clear old packages and files)
+      ignore_errors: yes
+      become: yes
+      ansible.builtin.shell: rm notes-1.0.0.tgz
+      args:
+        chdir: /
+
+    - name: Copy application package over to ec2 machine
+      become: yes
+      ansible.builtin.copy:
+        src:  files/notes-1.0.0.tgz
+        dest: /
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+
+    - name: create webapp directory 
+      become: yes
+      file:
+        state: directory
+        dest: /webapp
+      tags: web
+      register: y
+
+    - name: Unarchive our package to the web app directory
+      become: yes
+      ansible.builtin.unarchive:
+        src: /notes-1.0.0.tgz
+        dest: /webapp/ 
+        remote_src: yes
+    
+    
+    - name: update machine
+      become: yes
+      ansible.builtin.shell: yum update -y
+      args:
+        chdir: /   
+    
+    - name: enable npm repo
+      ansible.builtin.shell: curl -sL https://rpm.nodesource.com/setup_17.x | sudo bash -
+      args:
+        chdir: /   
+    - name: install node
+      become: yes
+      ansible.builtin.shell: yum install nodejs -y
+      args:
+        chdir: /   
+
+    - name: configure npm install
+      become: yes
+      ansible.builtin.shell: npm install -g n
+      args:
+        chdir: /webapp/package 
+
+    - name: change version to 17.6.x
+      become: yes
+      ansible.builtin.shell: n 17.6
+      args:
+        chdir: /webapp/package 
+
+    - name: update npm in webapp
+      become: yes
+      ansible.builtin.shell: npm install
+      args:
+        chdir: /webapp/package
+    
+    # this tasks clears the port 80 if in use.
+    #  It throws an error if the port is already clear however, so it is skipped if an error occurs
+    # on a fresh ec2 machine this "SHOULD"  not be needed. but its good to make sure there are no test applications such as "hello world" type tests sitting on the port
+   
+  #  commented out for now. not really needed- but would be a good anti bug measure when considering larger projects
+
+    # - name: clear port 80
+    #   ansible.builtin.shell: sudo lsof -t -i tcp:80 -s tcp:listen | sudo xargs kill
+    #   ignore_errors: yes
+    #   args:
+    #     chdir: /webapp/package
+
+    - name: run webapp (running.........)
+      become: yes
+      ansible.builtin.shell: npm run start
+      args:
+        chdir: /webapp/package
+
+   
+
+ 
